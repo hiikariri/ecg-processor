@@ -31,8 +31,8 @@ import numpy as np
 import pywt
 from scipy.signal import find_peaks
 
-from ECG.pan_tompkins import detect_r_peaks as _detect_pan_tompkins
-from ECG.pan_tompkins import heart_rate_from_peaks
+from pan_tompkins import detect_r_peaks as _detect_pan_tompkins
+from pan_tompkins import heart_rate_from_peaks
 
 __all__ = [
     "detect_r_peaks",

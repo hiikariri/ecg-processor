@@ -10,7 +10,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qt5 import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 
-from ECG.pan_tompkins import detect_r_peaks
+from pan_tompkins import detect_r_peaks
 
 DEFAULT_DATASET = Path("dataset_primer_1")
 ECG_SUFFIX = "_ecg.csv"
