@@ -115,6 +115,38 @@ def load_primer(folder: str = PRIMER_DIR, *, limit: Optional[int] = None,
 # --------------------------------------------------------------------------- #
 # BIDMC PPG & Respiration (lead II from the CSV export)
 # --------------------------------------------------------------------------- #
+def bidmc_numerics_hr(base_path: str):
+    """Monitor-reported HR series from a BIDMC ``*_Numerics.csv`` (1 Hz).
+
+    ``base_path`` is the record base without the ``_Signals.csv`` suffix (as
+    returned by :func:`discover_records`); the numerics file sits beside it.
+    Returns ``(time_s, hr_bpm)`` with non-physiological samples dropped, or
+    ``(None, None)`` if the file or HR column is missing.
+    """
+    num_path = base_path + "_Numerics.csv"
+    if not os.path.exists(num_path):
+        return None, None
+    try:
+        df = pd.read_csv(num_path)
+        df.columns = df.columns.str.strip()          # header has leading spaces
+        if "HR" not in df.columns:
+            return None, None
+        time_col = next((c for c in df.columns if c.lower().startswith("time")),
+                        df.columns[0])
+        t = pd.to_numeric(df[time_col], errors="coerce").to_numpy(dtype=float)
+        hr = pd.to_numeric(df["HR"], errors="coerce").to_numpy(dtype=float)
+        ok = np.isfinite(t) & np.isfinite(hr) & (hr > 0)
+        return (t[ok], hr[ok]) if ok.any() else (None, None)
+    except Exception:
+        return None, None
+
+
+def bidmc_ref_hr(base_path: str) -> Optional[float]:
+    """Mean monitor-reported HR (bpm) for a BIDMC record, or ``None``."""
+    _, hr = bidmc_numerics_hr(base_path)
+    return float(np.mean(hr)) if hr is not None and hr.size else None
+
+
 def load_bidmc_record(path: str, *, lead: str = "II") -> ECGRecord:
     """Load one BIDMC ``*_Signals.csv``. ``path`` may include or omit the suffix."""
     base = path[:-len(BIDMC_SUFFIX)] if path.endswith(BIDMC_SUFFIX) else path
@@ -128,7 +160,7 @@ def load_bidmc_record(path: str, *, lead: str = "II") -> ECGRecord:
     ecg = df[lead].to_numpy(dtype=float)
     fs = _sampling_rate(time)
     name = os.path.basename(base)
-    return ECGRecord(name=name, ecg=ecg, fs=fs, time=time, ref_hr=None,
+    return ECGRecord(name=name, ecg=ecg, fs=fs, time=time, ref_hr=bidmc_ref_hr(base),
                      source="bidmc", lead=lead)
 
 
