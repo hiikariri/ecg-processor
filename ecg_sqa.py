@@ -13,20 +13,6 @@ the signal outright; only signals that survive every stage are scored.
                                        inconsistent beats and tiers the
                                        survivors into HR-quality vs diagnostic
 
-Improvements over the original engine
--------------------------------------
-* Self-contained: takes ``(ecg, fs)`` and filters internally with
-  ``ecg_processor.bandpass_filter`` -- no external processor object needed.
-* Single robust detector (Pan-Tompkins) + morphology consistency. Two stages
-  were dropped after testing on real data: the zero-crossing "pure noise" stage
-  (anti-discriminative -- clean traces with a noisy baseline cross the midpoint
-  far more often than railed pure noise) and the bSQI two-detector stage (its
-  second, wavelet, detector is unreliable at low sampling rates and falsely
-  rejected ~10 clean 125 Hz BIDMC records). Noise is caught where it actually
-  separates: saturation on the raw signal (Stage 1) and low beat-morphology
-  consistency (Stage 3).
-* kSQI (kurtosis) reported as an extra, literature-standard SQI.
-
 Usage
 -----
     from ecg_sqa import ECGSQAEngine

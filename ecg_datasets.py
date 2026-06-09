@@ -33,7 +33,7 @@ BIDMC_SUFFIX = "_Signals.csv"
 @dataclass
 class ECGRecord:
     name: str
-    ecg: np.ndarray              # single-lead ECG samples
+    ecg: np.ndarray             # single-lead ECG samples
     fs: float
     time: np.ndarray            # per-sample time axis (s)
     ref_hr: Optional[float]     # ground-truth heart rate (bpm), if available
@@ -44,15 +44,10 @@ class ECGRecord:
     def duration(self) -> float:
         return float(self.time[-1] - self.time[0]) if self.time.size else 0.0
 
-
-# --------------------------------------------------------------------------- #
-# Helpers
-# --------------------------------------------------------------------------- #
 def short_label(name: str) -> str:
     """Trim ``data_`` prefix and ``_YYYYMMDD_HHMMSS`` timestamp from a name."""
     s = re.sub(r"_\d{8}_\d{6}$", "", name)
     return s[len("data_"):] if s.startswith("data_") else s
-
 
 def _sampling_rate(time: np.ndarray) -> float:
     """fs from the total span, robust to per-sample timestamp rounding.
@@ -65,10 +60,6 @@ def _sampling_rate(time: np.ndarray) -> float:
     span = float(time[-1] - time[0])
     return (time.size - 1) / span if span > 0 else float("nan")
 
-
-# --------------------------------------------------------------------------- #
-# Primer (Hi-Me! 2.0)
-# --------------------------------------------------------------------------- #
 def _primer_ref_hr(meta_path: str) -> Optional[float]:
     if not os.path.exists(meta_path):
         return None
@@ -78,7 +69,6 @@ def _primer_ref_hr(meta_path: str) -> Optional[float]:
         return float(meta["ground_truth"]["heart_rate_bpm"])
     except (ValueError, KeyError, TypeError, json.JSONDecodeError):
         return None
-
 
 def load_primer_record(path: str, *, column: str = "ECG_Raw (V)") -> ECGRecord:
     """Load one primer ``*_ecg.csv``. ``path`` may include or omit the suffix."""
@@ -97,7 +87,6 @@ def load_primer_record(path: str, *, column: str = "ECG_Raw (V)") -> ECGRecord:
     return ECGRecord(name=name, ecg=ecg, fs=fs, time=time, ref_hr=ref_hr,
                      source="primer", lead=col)
 
-
 def load_primer(folder: str = PRIMER_DIR, *, limit: Optional[int] = None,
                 column: str = "ECG_Raw (V)") -> List[ECGRecord]:
     files = sorted(glob.glob(os.path.join(folder, f"*{PRIMER_SUFFIX}")))
@@ -111,10 +100,8 @@ def load_primer(folder: str = PRIMER_DIR, *, limit: Optional[int] = None,
             continue
     return out
 
+ #
 
-# --------------------------------------------------------------------------- #
-# BIDMC PPG & Respiration (lead II from the CSV export)
-# --------------------------------------------------------------------------- #
 def bidmc_numerics_hr(base_path: str):
     """Monitor-reported HR series from a BIDMC ``*_Numerics.csv`` (1 Hz).
 
@@ -140,12 +127,10 @@ def bidmc_numerics_hr(base_path: str):
     except Exception:
         return None, None
 
-
 def bidmc_ref_hr(base_path: str) -> Optional[float]:
     """Mean monitor-reported HR (bpm) for a BIDMC record, or ``None``."""
     _, hr = bidmc_numerics_hr(base_path)
     return float(np.mean(hr)) if hr is not None and hr.size else None
-
 
 def load_bidmc_record(path: str, *, lead: str = "II") -> ECGRecord:
     """Load one BIDMC ``*_Signals.csv``. ``path`` may include or omit the suffix."""
@@ -163,7 +148,6 @@ def load_bidmc_record(path: str, *, lead: str = "II") -> ECGRecord:
     return ECGRecord(name=name, ecg=ecg, fs=fs, time=time, ref_hr=bidmc_ref_hr(base),
                      source="bidmc", lead=lead)
 
-
 def load_bidmc(folder: str = BIDMC_CSV_DIR, *, limit: Optional[int] = None,
                lead: str = "II") -> List[ECGRecord]:
     files = sorted(glob.glob(os.path.join(folder, f"*{BIDMC_SUFFIX}")))
@@ -177,10 +161,6 @@ def load_bidmc(folder: str = BIDMC_CSV_DIR, *, limit: Optional[int] = None,
             continue
     return out
 
-
-# --------------------------------------------------------------------------- #
-# Folder-agnostic discovery (for the GUI)
-# --------------------------------------------------------------------------- #
 def discover_records(folder: str):
     """Return ``[(kind, base_path, name), ...]`` for whichever layout is present.
 
@@ -200,7 +180,6 @@ def discover_records(folder: str):
             base = f[:-len(BIDMC_SUFFIX)]
             recs.append(("bidmc", base, os.path.basename(base)))
     return recs
-
 
 def load_record(kind: str, base_path: str) -> ECGRecord:
     if kind == "primer":

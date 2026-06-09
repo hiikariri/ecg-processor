@@ -29,18 +29,13 @@ from ecg_sqa import ECGSQAEngine
 
 DEFAULT_DATASET = ds.PRIMER_DIR if Path(ds.PRIMER_DIR).exists() else "."
 PRIMER_COLUMNS = {"Raw": "ECG_Raw (V)", "Filtered": "ECG_Filtered (V)"}
-
-# Colours per verdict tier
 TIER_COLOR = {"diag": "#1b7837", "hr": "#7fbf7b", "bad": "#d6604d", None: "#b2182b"}
-
 
 def _verdict_color(res):
     if res["quality"] == "acceptable":
         return TIER_COLOR["diag"] if res["iscore_quality"] == "diag" else TIER_COLOR["hr"]
     return TIER_COLOR["bad"] if res["iscore_quality"] == "bad" else TIER_COLOR[None]
 
-
-# --------------------------------------------------------------------------- #
 class SQAGui(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -127,7 +122,6 @@ class SQAGui(QtWidgets.QMainWindow):
         self._ecg_tmax = 0.0
         self.refresh_records()
 
-    # ----------------------------------------------------------------- #
     def browse_dataset(self):
         path = QtWidgets.QFileDialog.getExistingDirectory(
             self, "Select dataset folder", str(self.dataset_dir))
@@ -169,7 +163,6 @@ class SQAGui(QtWidgets.QMainWindow):
         self.prev_btn.setEnabled(n > 0 and i > 0)
         self.next_btn.setEnabled(n > 0 and i < n - 1)
 
-    # ----------------------------------------------------------------- #
     def _load_current(self):
         i = self.record_combo.currentIndex()
         if i < 0 or i >= len(self.records):
@@ -195,7 +188,6 @@ class SQAGui(QtWidgets.QMainWindow):
         self.view_start.setMaximum(max(0.0, rec.duration - self.view_width.value()))
         self._draw()
 
-    # ----------------------------------------------------------------- #
     def _draw(self):
         rec, res, name = self._cur
         fs = rec.fs
@@ -288,7 +280,6 @@ class SQAGui(QtWidgets.QMainWindow):
         if redraw:
             self.canvas.draw_idle()
 
-    # ----------------------------------------------------------------- #
     def evaluate_all(self):
         if not self.records:
             QtWidgets.QMessageBox.warning(self, "No records", "No records found.")

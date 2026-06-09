@@ -160,7 +160,6 @@ def detect_r_peaks_wavelet(ecg, fs, wavelet="db4", level=7,
                           prominence=prominence_frac * mx)
     return np.asarray(peaks, dtype=int)
 
-# Registry so callers can pick a detector by name.
 DETECTORS = {
     "pan_tompkins": detect_r_peaks_pan_tompkins,
     "wavelet": detect_r_peaks_wavelet,
