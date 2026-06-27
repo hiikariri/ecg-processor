@@ -40,7 +40,8 @@ PRIMER_COLUMNS = {"Raw": "ECG_Raw (V)", "Filtered": "ECG_Filtered (V)"}
 BIDMC_LEADS = ["II", "V", "AVR"]
 
 SRC_COLOR = {"primer": "#1f77b4", "bidmc": "#d62728"}
-TOL_BPM = 5.0  # "within tolerance" band for the agreement summary
+TOL_FRAC = 0.10  # ±10% of reference HR band (ANSI/AAMI EC13, IEC 60601-2-27)
+EXCLUDE_RECORDS = {"bidmc_41"}  # dropped from batch evaluation (excluded by request)
 
 
 def _load_sqa_bad(folder: Path) -> set:
@@ -53,6 +54,53 @@ def _load_sqa_bad(folder: Path) -> set:
             return set(json.load(fh).get("sqa_bad", []))
     except (json.JSONDecodeError, OSError):
         return set()
+
+
+# --------------------------------------------------------------------------- #
+class PTStepsWindow(QtWidgets.QMainWindow):
+    """Standalone window showing every Pan-Tompkins stage, with a Save button.
+
+    Carries the matplotlib navigation toolbar (pan/zoom) plus an explicit
+    "Save plot" button that writes the figure to PNG/PDF/SVG.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Pan-Tompkins pipeline steps")
+        self.resize(1200, 950)
+        self._default_path = "pan_tompkins_steps.png"  # set per record before show
+
+        central = QtWidgets.QWidget()
+        self.setCentralWidget(central)
+        lay = QtWidgets.QVBoxLayout(central)
+
+        # constrained_layout keeps the 5 stacked panels + suptitle from colliding
+        self.figure = Figure(figsize=(11, 9), constrained_layout=True)
+        self.canvas = FigureCanvas(self.figure)
+        self.toolbar = NavigationToolbar(self.canvas, self)
+        self.save_btn = QtWidgets.QPushButton("💾 Save plot…")
+        self.save_btn.setToolTip("Save this step-by-step figure to an image file.")
+        self.save_btn.clicked.connect(self.save_plot)
+
+        bar = QtWidgets.QHBoxLayout()
+        bar.addWidget(self.toolbar)
+        bar.addStretch(1)
+        bar.addWidget(self.save_btn)
+        lay.addLayout(bar)
+        lay.addWidget(self.canvas)
+
+    def save_plot(self):
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Save Pan-Tompkins steps", self._default_path,
+            "PNG image (*.png);;PDF document (*.pdf);;SVG image (*.svg)")
+        if not path:
+            return
+        try:
+            self.figure.savefig(path, dpi=150)
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Save failed", str(exc))
+            return
+        QtWidgets.QMessageBox.information(self, "Saved", f"Saved figure to:\n{path}")
 
 
 # --------------------------------------------------------------------------- #
@@ -133,6 +181,16 @@ class HRTestGui(QtWidgets.QMainWindow):
         self.view_start.valueChanged.connect(self._apply_view)
         self.view_width.valueChanged.connect(self._apply_view)
 
+        # Open the step-by-step Pan-Tompkins decomposition in its own window
+        self.pt_steps_btn = QtWidgets.QPushButton("Pan-Tompkins steps ↗")
+        self.pt_steps_btn.setToolTip(
+            "Open every stage of the Pan-Tompkins pipeline for the current "
+            "record (band-pass → derivative → square → integrate → adaptive "
+            "threshold) in a separate window, with a button to save it as an "
+            "image.")
+        self.pt_steps_btn.clicked.connect(self.open_pt_steps)
+        controls.addWidget(self.pt_steps_btn, 3, 4, 1, 3)
+
         # Metrics line
         self.metrics_label = QtWidgets.QLabel("Select a record and click Analyze && Plot.")
         self.metrics_label.setWordWrap(True)
@@ -148,6 +206,7 @@ class HRTestGui(QtWidgets.QMainWindow):
 
         self._ecg_ax = None
         self._ecg_tmax = 0.0
+        self._pt_win = None        # separate Pan-Tompkins steps window (lazy)
         self.refresh_records()
 
     # ----------------------------------------------------------------- #
@@ -295,6 +354,100 @@ class HRTestGui(QtWidgets.QMainWindow):
             self.canvas.draw_idle()
 
     # ----------------------------------------------------------------- #
+    def open_pt_steps(self):
+        """Open (or raise) the separate Pan-Tompkins steps window and draw it."""
+        if self._cur is None:
+            QtWidgets.QMessageBox.information(
+                self, "No record", "Analyze a record first (Analyze && Plot).")
+            return
+        if self._pt_win is None:
+            self._pt_win = PTStepsWindow(self)
+        self._draw_pt_steps()
+        self._pt_win.show()
+        self._pt_win.raise_()
+        self._pt_win.activateWindow()
+
+    def _draw_pt_steps(self):
+        """Render the five Pan-Tompkins stages into the steps window."""
+        rec, _, _, _ = self._cur
+        name = ds.short_label(rec.name)
+        ecg = np.asarray(rec.ecg, dtype=float)
+        st = ep.pan_tompkins_stages(ecg, rec.fs)
+        t = np.asarray(rec.time)[:ecg.size]
+        hr = ep.heart_rate_from_peaks(st.r_peaks, rec.fs)
+        hr_str = f"{hr:.1f} bpm" if np.isfinite(hr) else "n/a"
+
+        fig = self._pt_win.figure
+        fig.clear()
+        axes = fig.subplots(5, 1, sharex=True)
+        fig.suptitle(
+            f"{name} — Pan-Tompkins pipeline  ({rec.source} lead {rec.lead}, "
+            f"fs {rec.fs:.0f} Hz)  ·  {st.r_peaks.size} beats, HR {hr_str}",
+            fontsize=11)
+
+        # 1) raw ECG with the final refined R-peaks
+        ax = axes[0]
+        ax.plot(t, st.raw, lw=0.7, color="tab:blue")
+        if st.r_peaks.size:
+            ax.plot(t[st.r_peaks], st.raw[st.r_peaks], "x", color="tab:red",
+                    ms=7, mew=1.3, label=f"R-peaks ({st.r_peaks.size})")
+            ax.legend(loc="upper right", fontsize=8)
+        ax.set_title("1. Raw ECG → refined R-peaks", loc="left", fontsize=9)
+        ax.set_ylabel(rec.lead or "ECG")
+
+        # 2) band-pass filter (5-15 Hz)
+        ax = axes[1]
+        ax.plot(t, st.filtered, lw=0.7, color="tab:purple")
+        ax.set_title("2. Band-pass filter (5–15 Hz)", loc="left", fontsize=9)
+        ax.set_ylabel("filtered")
+
+        # 3) derivative
+        ax = axes[2]
+        ax.plot(t, st.derivative, lw=0.7, color="tab:orange")
+        ax.set_title("3. Derivative (slope)", loc="left", fontsize=9)
+        ax.set_ylabel("d/dt")
+
+        # 4) squared
+        ax = axes[3]
+        ax.plot(t, st.squared, lw=0.7, color="tab:brown")
+        ax.set_title("4. Squared", loc="left", fontsize=9)
+        ax.set_ylabel("(d/dt)²")
+
+        # 5) moving-window integration + adaptive thresholds + QRS marks
+        ax = axes[4]
+        ax.plot(t, st.integrated, lw=0.8, color="tab:green", label="MWA (150 ms)")
+        if st.thr_idx.size:
+            tt = t[st.thr_idx]
+            ax.plot(tt, st.thr1, lw=1.0, color="tab:red", ls="--",
+                    drawstyle="steps-post", label="THRESHOLD_I1")
+            ax.plot(tt, st.thr2, lw=0.9, color="0.5", ls=":",
+                    drawstyle="steps-post", label="THRESHOLD_I2")
+        if st.mwa_peaks.size:
+            ax.plot(t[st.mwa_peaks], st.integrated[st.mwa_peaks], "v",
+                    color="k", ms=5, label=f"QRS detected ({st.mwa_peaks.size})")
+        ax.set_title("5. Moving-window integration → adaptive double threshold",
+                     loc="left", fontsize=9)
+        ax.set_ylabel("integrated")
+        ax.set_xlabel("Time (s)")
+        ax.legend(loc="upper right", fontsize=8, ncol=2)
+
+        for a in axes:
+            a.grid(alpha=0.3)
+
+        # start zoomed to the main view window; the toolbar can pan/zoom out
+        tmax = float(t[-1]) if t.size else 0.0
+        start = max(0.0, self.view_start.value())
+        end = min(start + self.view_width.value(), tmax) if self.view_width.value() else tmax
+        if start >= end:
+            start, end = 0.0, tmax
+        axes[0].set_xlim(start, end)
+
+        self._pt_win.setWindowTitle(f"Pan-Tompkins steps — {name}")
+        self._pt_win._default_path = str(
+            self.dataset_dir / f"{name}_pan_tompkins_steps.png")
+        self._pt_win.canvas.draw_idle()
+
+    # ----------------------------------------------------------------- #
     def evaluate_all(self):
         if not self.records:
             QtWidgets.QMessageBox.warning(self, "No records", "No records found.")
@@ -309,12 +462,15 @@ class HRTestGui(QtWidgets.QMainWindow):
         progress.show()
 
         rows = []          # (source, ref_hr, computed_hr)
-        n_no_ref = n_skipped = n_failed = 0
+        n_no_ref = n_skipped = n_failed = n_excluded = 0
         for k, (kind, base, name) in enumerate(self.records):
             if progress.wasCanceled():
                 break
             progress.setValue(k)
             QtWidgets.QApplication.processEvents()
+            if name in EXCLUDE_RECORDS:
+                n_excluded += 1
+                continue
             if skip_bad and name in self.sqa_bad:
                 n_skipped += 1
                 continue
@@ -344,7 +500,7 @@ class HRTestGui(QtWidgets.QMainWindow):
         mae = float(np.mean(np.abs(err)))
         rmse = float(np.sqrt(np.mean(err ** 2)))
         bias = float(np.mean(err))
-        within = float(np.mean(np.abs(err) <= TOL_BPM) * 100)
+        within = float(np.mean(np.abs(err) <= TOL_FRAC * ref) * 100)
 
         # Per-source MAE (primer's label is unreliable; keep them distinguishable)
         per_src = []
@@ -353,12 +509,13 @@ class HRTestGui(QtWidgets.QMainWindow):
             if m.any():
                 per_src.append(f"{s} n={int(m.sum())} MAE {np.mean(np.abs(err[m])):.1f}")
         skipped_note = f", skipped {n_skipped} SQA-flagged" if n_skipped else ""
+        skipped_note += f", excluded {n_excluded}" if n_excluded else ""
         self.metrics_label.setStyleSheet("font-weight: bold;")
         self.metrics_label.setText(
             f"[{method}] {len(rows)} records compared "
             f"(no ref {n_no_ref}, failed {n_failed}{skipped_note})  |  "
             f"MAE {mae:.1f}  RMSE {rmse:.1f}  bias {bias:+.1f} bpm  |  "
-            f"within ±{TOL_BPM:.0f} bpm: {within:.0f}%   ·   " + "  ·  ".join(per_src))
+            f"within ±{TOL_FRAC * 100:.0f}% of ref: {within:.1f}%   ·   " + "  ·  ".join(per_src))
 
         self.figure.clear()
         ax1, ax2 = self.figure.subplots(1, 2)
@@ -371,9 +528,9 @@ class HRTestGui(QtWidgets.QMainWindow):
         lo = float(min(ref.min(), comp.min())) - 5
         hi = float(max(ref.max(), comp.max())) + 5
         ax1.plot([lo, hi], [lo, hi], "k--", lw=0.9, label="identity")
-        ax1.fill_between([lo, hi], [lo - TOL_BPM, hi - TOL_BPM],
-                         [lo + TOL_BPM, hi + TOL_BPM], color="0.8", alpha=0.4,
-                         label=f"±{TOL_BPM:.0f} bpm")
+        band_x = np.array([max(lo, 0.0), hi])  # HR is positive; ±10% widens with rate
+        ax1.fill_between(band_x, band_x * (1 - TOL_FRAC), band_x * (1 + TOL_FRAC),
+                         color="0.8", alpha=0.4, label=f"±{TOL_FRAC * 100:.0f}% of ref")
         ax1.set_xlim(lo, hi)
         ax1.set_ylim(lo, hi)
         ax1.set_xlabel("Reference HR (bpm)")

@@ -1,14 +1,14 @@
 """
 Standalone agreement plot for a True HR vs Predicted HR dataset.
 Mirrors the 'Evaluate all' visualisation in hr_test_gui.py:
-  left  – agreement scatter with identity line and ±TOL_BPM band
+  left  – agreement scatter with identity line and ±10%-of-true band
   right – signed-error histogram with bias line
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
 
-TOL_BPM = 5.0
+TOL_FRAC = 0.10  # ±10% of true HR band (ANSI/AAMI EC13, IEC 60601-2-27)
 
 # ------------------------------------------------------------------
 # Data
@@ -48,11 +48,11 @@ err  = pred_hr - true_hr
 mae  = float(np.mean(np.abs(err)))
 rmse = float(np.sqrt(np.mean(err ** 2)))
 bias = float(np.mean(err))
-within = float(np.mean(np.abs(err) <= TOL_BPM) * 100)
+within = float(np.mean(np.abs(err) <= TOL_FRAC * true_hr) * 100)
 n = len(true_hr)
 
 print(f"n={n}  MAE {mae:.2f}  RMSE {rmse:.2f}  bias {bias:+.2f} bpm  "
-      f"within ±{TOL_BPM:.0f} bpm: {within:.0f}%")
+      f"within ±{TOL_FRAC * 100:.0f}% of true: {within:.1f}%")
 
 # ------------------------------------------------------------------
 # Plot
@@ -63,10 +63,11 @@ fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5), tight_layout=True)
 lo = float(min(true_hr.min(), pred_hr.min())) - 5
 hi = float(max(true_hr.max(), pred_hr.max())) + 5
 
-ax1.fill_between([lo, hi],
-                 [lo - TOL_BPM, hi - TOL_BPM],
-                 [lo + TOL_BPM, hi + TOL_BPM],
-                 color="0.8", alpha=0.4, label=f"±{TOL_BPM:.0f} bpm")
+band_x = np.array([max(lo, 0.0), hi])  # HR is positive; ±10% widens with rate
+ax1.fill_between(band_x,
+                 band_x * (1 - TOL_FRAC),
+                 band_x * (1 + TOL_FRAC),
+                 color="0.8", alpha=0.4, label=f"±{TOL_FRAC * 100:.0f}% of true")
 ax1.plot([lo, hi], [lo, hi], "k--", lw=0.9, label="identity")
 ax1.scatter(true_hr, pred_hr, s=30, alpha=0.75,
             edgecolors="0.3", lw=0.3, color="#1f77b4",
@@ -93,7 +94,7 @@ ax2.legend(loc="upper right", fontsize=8)
 # summary in figure suptitle
 fig.suptitle(
     f"MAE {mae:.2f}  ·  RMSE {rmse:.2f}  ·  bias {bias:+.2f} bpm  ·  "
-    f"within ±{TOL_BPM:.0f} bpm: {within:.0f}%  (n={n})",
+    f"within ±{TOL_FRAC * 100:.0f}% of true: {within:.1f}%  (n={n})",
     fontsize=9, y=1.01,
 )
 
